@@ -199,6 +199,56 @@ def sample_sonnet_requests(
     return sampled_requests
 
 
+def sample_mmmu_pro_vision_requests(
+    dataset,
+    num_requests: int,
+    tokenizer: PreTrainedTokenizerBase,
+    fixed_output_len: Optional[int] = None,
+) -> List[Tuple[str, str, int, Optional[Dict[str, Collection[str]]]]]:
+    sampled_requests: List[Tuple[str, int, int, Dict[str,
+                                                     Collection[str]]]] = []
+    for data in dataset:
+        if len(sampled_requests) == num_requests:
+            break
+
+        # MMMU-Pro vision direct prompt
+        # Ref: https://github.com/MMMU-Benchmark/MMMU/blob/6ce42f4d8f70c1841c67867152648974415b5cac/mmmu-pro/prompts.yaml#L5
+        prompt = (
+            "Answer with the option letter from the given choices directly. "
+            "The last line of your response should be of the following "
+            "format: 'Answer: $LETTER' (without quotes) where LETTER is one of "
+            "options.")
+
+        prompt_token_ids = tokenizer(prompt).input_ids
+        if fixed_output_len is None:
+            # Default max output len is set to 128
+            print("--hf-output-len is not provided. Using default value 128.")
+            fixed_output_len = 128
+
+        prompt_len = len(prompt_token_ids)
+        output_len = fixed_output_len
+
+        assert isinstance(
+            data["image"],
+            Image), ("Input image format must be `PIL.Image.Image`, "
+                     f"given {type(data['image'])}.")
+        image: Image = data["image"]
+        image = image.convert("RGB")
+        image_data = io.BytesIO()
+        image.save(image_data, format='JPEG')
+        image_base64 = base64.b64encode(image_data.getvalue()).decode("utf-8")
+        mm_content = {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:image/jpeg;base64,{image_base64}"
+            },
+        }
+
+        sampled_requests.append((prompt, prompt_len, output_len, mm_content))
+
+    return sampled_requests
+
+
 def sample_hf_requests(
     dataset_path: str,
     dataset_subset: str,
@@ -208,6 +258,21 @@ def sample_hf_requests(
     random_seed: int,
     fixed_output_len: Optional[int] = None,
 ) -> List[Tuple[str, str, int, Optional[Dict[str, Collection[str]]]]]:
+
+    # Special case for MMMU-Pro vision dataset
+    if dataset_path == 'MMMU/MMMU_Pro' and dataset_subset == 'vision':
+        assert dataset_split == "test"
+        dataset = load_dataset(dataset_path,
+                               name=dataset_subset,
+                               split=dataset_split,
+                               streaming=True)
+        assert "image" in dataset.features, (
+            "MMMU/MMMU_Pro vision dataset must have 'image' column.")
+        filter_func = lambda x: isinstance(x["image"], Image)
+        dataset = dataset.shuffle(seed=random_seed).filter(filter_func)
+        return sample_mmmu_pro_vision_requests(dataset, num_requests,
+                                               tokenizer, fixed_output_len)
+
     dataset = load_dataset(dataset_path,
                            name=dataset_subset,
                            split=dataset_split,
@@ -460,6 +525,7 @@ async def benchmark(
     api_url: str,
     base_url: str,
     model_id: str,
+    model_name: str,
     tokenizer: PreTrainedTokenizerBase,
     input_requests: List[Tuple[str, int, int]],
     logprobs: Optional[int],
@@ -488,6 +554,7 @@ async def benchmark(
             "Multi-modal content is only supported on 'openai-chat' backend.")
     test_input = RequestFuncInput(
         model=model_id,
+        model_name=model_name,
         prompt=test_prompt,
         api_url=api_url,
         prompt_len=test_prompt_len,
@@ -508,6 +575,7 @@ async def benchmark(
     if profile:
         print("Starting profiler...")
         profile_input = RequestFuncInput(model=model_id,
+                                         model_name=model_name,
                                          prompt=test_prompt,
                                          api_url=base_url + "/start_profile",
                                          prompt_len=test_prompt_len,
@@ -551,6 +619,7 @@ async def benchmark(
     async for request in get_request(input_requests, request_rate, burstiness):
         prompt, prompt_len, output_len, mm_content = request
         request_func_input = RequestFuncInput(model=model_id,
+                                              model_name=model_name,
                                               prompt=prompt,
                                               api_url=api_url,
                                               prompt_len=prompt_len,
@@ -715,7 +784,9 @@ def main(args: argparse.Namespace):
 
     backend = args.backend
     model_id = args.model
+    model_name = args.served_model_name
     tokenizer_id = args.tokenizer if args.tokenizer is not None else args.model
+    tokenizer_mode = args.tokenizer_mode
 
     if args.base_url is not None:
         api_url = f"{args.base_url}{args.endpoint}"
@@ -725,6 +796,7 @@ def main(args: argparse.Namespace):
         base_url = f"http://{args.host}:{args.port}"
 
     tokenizer = get_tokenizer(tokenizer_id,
+                              tokenizer_mode=tokenizer_mode,
                               trust_remote_code=args.trust_remote_code)
 
     if args.dataset is not None:
@@ -810,6 +882,7 @@ def main(args: argparse.Namespace):
             api_url=api_url,
             base_url=base_url,
             model_id=model_id,
+            model_name=model_name,
             tokenizer=tokenizer,
             input_requests=input_requests,
             logprobs=args.logprobs,
@@ -1144,6 +1217,23 @@ if __name__ == "__main__":
         help="Output length for each request. Overrides the output lengths "
         "from the sampled HF dataset.",
     )
+
+    parser.add_argument(
+        '--tokenizer-mode',
+        type=str,
+        default="auto",
+        choices=['auto', 'slow', 'mistral'],
+        help='The tokenizer mode.\n\n* "auto" will use the '
+        'fast tokenizer if available.\n* "slow" will '
+        'always use the slow tokenizer. \n* '
+        '"mistral" will always use the `mistral_common` tokenizer.')
+
+    parser.add_argument("--served-model-name",
+                        type=str,
+                        default=None,
+                        help="The model name used in the API. "
+                        "If not specified, the model name will be the "
+                        "same as the ``--model`` argument. ")
 
     args = parser.parse_args()
     main(args)

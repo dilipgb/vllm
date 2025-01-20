@@ -52,6 +52,10 @@ struct KernelVecType<c10::BFloat16> {
   using v_load_vec_type = vec_op::BF16Vec16;
 };
 #else
+  #ifdef __aarch64__
+    #ifndef ARM_BF16_SUPPORT
+    // pass
+    #else
 template <>
 struct KernelVecType<c10::BFloat16> {
   using q_load_vec_type = vec_op::BF16Vec8;
@@ -61,6 +65,18 @@ struct KernelVecType<c10::BFloat16> {
   using qk_acc_vec_type = vec_op::FP32Vec16;
   using v_load_vec_type = vec_op::BF16Vec16;
 };
+    #endif
+  #else
+template <>
+struct KernelVecType<c10::BFloat16> {
+  using q_load_vec_type = vec_op::BF16Vec8;
+  using q_vec_type = vec_op::FP32Vec16;
+  using k_load_vec_type = vec_op::BF16Vec16;
+  using k_vec_type = vec_op::FP32Vec16;
+  using qk_acc_vec_type = vec_op::FP32Vec16;
+  using v_load_vec_type = vec_op::BF16Vec16;
+};
+  #endif
 #endif
 
 template <typename T>
@@ -371,7 +387,7 @@ void paged_attention_v1_impl_launcher(
     torch::Tensor& out, torch::Tensor& query, torch::Tensor& key_cache,
     torch::Tensor& value_cache, int num_kv_heads, float scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int max_seq_len,
-    const c10::optional<torch::Tensor>& alibi_slopes) {
+    const std::optional<torch::Tensor>& alibi_slopes) {
   int num_seqs = query.size(0);
   int num_heads = query.size(1);
   int head_size = query.size(2);
@@ -444,7 +460,7 @@ void paged_attention_v1(
     torch::Tensor& out, torch::Tensor& query, torch::Tensor& key_cache,
     torch::Tensor& value_cache, int64_t num_kv_heads, double scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int64_t block_size,
-    int64_t max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes,
+    int64_t max_seq_len, const std::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype, double k_scale, double v_scale,
     const int64_t tp_rank, const int64_t blocksparse_local_blocks,
     const int64_t blocksparse_vert_stride, const int64_t blocksparse_block_size,
@@ -687,7 +703,7 @@ void paged_attention_v2_impl_launcher(
     torch::Tensor& tmp_out, torch::Tensor& query, torch::Tensor& key_cache,
     torch::Tensor& value_cache, int num_kv_heads, float scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int block_size,
-    int max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes) {
+    int max_seq_len, const std::optional<torch::Tensor>& alibi_slopes) {
   int num_seqs = query.size(0);
   int num_heads = query.size(1);
   int head_size = query.size(2);
@@ -766,7 +782,7 @@ void paged_attention_v2(
     torch::Tensor& tmp_out, torch::Tensor& query, torch::Tensor& key_cache,
     torch::Tensor& value_cache, int64_t num_kv_heads, double scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int64_t block_size,
-    int64_t max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes,
+    int64_t max_seq_len, const std::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype, double k_scale, double v_scale,
     const int64_t tp_rank, const int64_t blocksparse_local_blocks,
     const int64_t blocksparse_vert_stride, const int64_t blocksparse_block_size,

@@ -1,4 +1,3 @@
-
 #ifndef CPU_TYPES_HPP
 #define CPU_TYPES_HPP
 
@@ -11,6 +10,9 @@
 #elif defined(__s390x__)
   //s390 implementation
   #include "cpu_types_vxe.hpp"
+#elif defined(__aarch64__)
+  //arm implementation
+  #include "cpu_types_arm.hpp"
 #else
   #warning "unsupported vLLM cpu implementation"
 #endif
