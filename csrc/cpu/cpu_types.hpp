@@ -8,7 +8,7 @@
   // ppc implementation
   #include "cpu_types_vsx.hpp"
 #elif defined(__s390x__)
-  //s390 implementation
+  // s390 implementation
   #include "cpu_types_vxe.hpp"
 #elif defined(__aarch64__)
   // arm implementation

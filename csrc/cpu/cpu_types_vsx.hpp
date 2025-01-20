@@ -514,7 +514,6 @@ inline BF16Vec16::BF16Vec16(const FP32Vec16& v) {
 #endif
 }
 
-
 inline void prefetch(const void* addr) {
   __asm__ __volatile__("dcbt 0, %0" : : "r"(addr) : "memory");
 }
