@@ -1,7 +1,7 @@
 FROM ubuntu:22.04
 USER root
 
-#Install necessary dependencies
+# Install necessary dependencies
 RUN apt-get update -y && apt-get install -y \
     git wget curl vim libnuma-dev libsndfile-dev libprotobuf-dev protobuf-compiler \
     build-essential ffmpeg libsm6 libxext6 libgl1 python3 python3-pip cmake ninja-build \
@@ -10,17 +10,17 @@ RUN apt-get update -y && apt-get install -y \
     python3-distutils python3-setuptools libbz2-dev liblz4-dev libzstd-dev \
     libsnappy-dev rapidjson-dev libboost-dev liborc-dev pkg-config libopenblas-dev
 
-#Upgrade pip
+# Upgrade pip
 RUN python3 -m pip install --upgrade pip
 
-# **Clear pip cache to remove any corrupted wheels**
+# **Clear pip cache to prevent corrupted wheels**
 RUN rm -rf /root/.cache/pip && mkdir -p /root/.cache/pip
 
-#Install Rust and Cargo
+# Install Rust and Cargo
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
     . "$HOME/.cargo/env"
 
-#Build and install Apache Arrow from source
+# Build and install Apache Arrow from source
 WORKDIR /tmp/arrow
 RUN git clone https://github.com/apache/arrow.git && \
     cd arrow/cpp && \
@@ -41,27 +41,30 @@ RUN git clone https://github.com/apache/arrow.git && \
           .. && \
     make -j$(nproc) && make install
 
-#Set environment variables for Arrow
+# Set environment variables for Arrow
 ENV CMAKE_PREFIX_PATH=/usr/local/lib/cmake:$CMAKE_PREFIX_PATH
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
-#Install pytorch nightly
-RUN pip install https://download.pytorch.org/whl/nightly/cpu/torch-2.6.0.dev20241201%2Bcpu-cp310-cp310-linux_s390x.whl
+# Install pytorch nightly
+RUN pip install --no-cache-dir https://download.pytorch.org/whl/nightly/cpu/torch-2.6.0.dev20241201%2Bcpu-cp310-cp310-linux_s390x.whl
 
-#Clone torchvision
+# Clone torchvision
 RUN git clone https://github.com/pytorch/vision.git && \
     cd vision && \
     git checkout 48b1edf && \
     python3 setup.py bdist_wheel && \
     pip install --no-cache-dir dist/*.whl && \
     rm -rf dist
-    
+
+# **Fix permissions for pip cache**
+RUN chmod -R 777 /root/.cache/pip
+
 # Create a non-root user and group
 WORKDIR /workspace/vllm
 RUN groupadd -r vllm && \
     useradd --uid 2000 --gid vllm -m -d /home/vllm vllm    
 
-#Copy the vLLM repository
+# Copy the vLLM repository
 COPY ./ /workspace/vllm
 WORKDIR /workspace/vllm
 
@@ -69,15 +72,18 @@ ARG GIT_REPO_CHECK=0
 RUN --mount=type=bind,source=.git,target=.git \
     if [ "$GIT_REPO_CHECK" != 0 ]; then bash tools/check_repo.sh; fi
 
-#Install pyzmq separately
+# Install pyzmq separately
 RUN pip install --no-cache-dir --verbose pyzmq
 
 # **Clear pip cache again before installing Python dependencies**
 RUN rm -rf /root/.cache/pip && mkdir -p /root/.cache/pip
 
-#Install Python requirements
+# **Ensure correct permissions before pip install**
+RUN chmod -R 777 /root/.cache/pip
+
+# Install Python requirements
 RUN --mount=type=cache,target=/root/.cache/pip  \
-    pip install -v \
+    pip install --no-cache-dir -v \
         'cmake>=3.26' ninja packaging 'setuptools-scm>=8' wheel jinja2 \
         -r requirements-cpu.txt \
         xformers uvloop==0.21.0
@@ -98,6 +104,6 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 RUN chown -R vllm:vllm /workspace/vllm
 USER vllm    
 
-#Entry point for the API server
+# Entry point for the API server
 ENTRYPOINT ["/usr/bin/python3", "-m", "vllm.entrypoints.openai.api_server"]
 
