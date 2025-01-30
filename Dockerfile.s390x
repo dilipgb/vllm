@@ -1,0 +1,84 @@
+FROM ubuntu:22.04
+USER root
+
+#Install necessary dependencies
+RUN apt-get update -y && apt-get install -y \
+    git wget curl vim libnuma-dev libsndfile-dev libprotobuf-dev protobuf-compiler \
+    build-essential ffmpeg libsm6 libxext6 libgl1 python3 python3-pip cmake ninja-build \
+    cargo libjpeg-dev libpng-dev zlib1g-dev libavcodec-dev libavformat-dev libswscale-dev \
+    libtiff-dev libwebp-dev llvm-dev libclang-dev clang libssl-dev g++ \
+    python3-distutils python3-setuptools libbz2-dev liblz4-dev libzstd-dev \
+    libsnappy-dev rapidjson-dev libboost-dev liborc-dev pkg-config libopenblas-dev
+
+#Upgrade pip
+RUN python3 -m pip install --upgrade pip
+
+#Install Rust and Cargo
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
+    . "$HOME/.cargo/env"
+
+#Build and install Apache Arrow from source
+WORKDIR /tmp/arrow
+RUN git clone https://github.com/apache/arrow.git && \
+    cd arrow/cpp && \
+    mkdir release && cd release && \
+    cmake -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=/usr/local \
+          -DARROW_PYTHON=ON \
+          -DARROW_PARQUET=ON \
+          -DARROW_ORC=ON \
+          -DARROW_FILESYSTEM=ON \
+          -DARROW_WITH_LZ4=ON \
+          -DARROW_WITH_ZSTD=ON \
+          -DARROW_WITH_SNAPPY=ON \
+          -DARROW_JSON=ON \
+          -DARROW_CSV=ON \
+          -DPROTOBUF_PROTOC_EXECUTABLE=/usr/bin/protoc \
+          -DARROW_DEPENDENCY_SOURCE=BUNDLED \
+          .. && \
+    make -j$(nproc) && make install
+
+#Set environment variables for Arrow
+ENV CMAKE_PREFIX_PATH=/usr/local/lib/cmake:$CMAKE_PREFIX_PATH
+ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+
+#Install pytorch nightly
+RUN pip install https://download.pytorch.org/whl/nightly/cpu/torch-2.6.0.dev20241201%2Bcpu-cp310-cp310-linux_s390x.whl
+
+#Clone torchvision
+RUN git clone https://github.com/pytorch/vision.git && \
+    cd vision && \
+    git checkout 48b1edf && \
+    python3 setup.py bdist_wheel && \
+    pip install dist/*.whl && \
+    rm -rf dist
+
+#Copy the vLLM repository
+COPY ./ /workspace/vllm
+
+WORKDIR /workspace/vllm
+ARG GIT_REPO_CHECK=0
+RUN --mount=type=bind,source=.git,target=.git \
+    if [ "$GIT_REPO_CHECK" != 0 ]; then bash tools/check_repo.sh; fi
+
+#Install Python requirements
+RUN --mount=type=cache,target=/root/.cache/pip  \
+    pip install -v \
+        'cmake>=3.26' ninja packaging 'setuptools-scm>=8' wheel jinja2 \
+        -r requirements-cpu.txt \
+        xformers uvloop==0.21.0
+
+# Upgrade setuptools to a compatible version
+RUN python3 -m pip install --upgrade setuptools
+# Build and Install vllm
+RUN --mount=type=cache,target=/root/.cache/pip \
+    --mount=type=cache,target=/root/.cache/ccache \
+    --mount=type=bind,source=.git,target=.git \
+    VLLM_TARGET_DEVICE=cpu python3 setup.py build_ext --inplace && \
+    VLLM_TARGET_DEVICE=cpu python3 setup.py bdist_wheel && \
+    pip install dist/*.whl && \
+    rm -rf dist
+
+#Entry point for the API server
+ENTRYPOINT ["/usr/bin/python3", "-m", "vllm.entrypoints.openai.api_server"]
+

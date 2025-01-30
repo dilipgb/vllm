@@ -24,7 +24,7 @@ struct KernelVecType<float> {
 
 template <>
 struct KernelVecType<c10::Half> {
-#ifdef __powerpc64__
+#if defined(__powerpc64__) || defined(__s390x__)
   // Power architecture-specific vector types
   using q_load_vec_type = vec_op::FP32Vec8;
   using k_load_vec_type = vec_op::FP32Vec16;
