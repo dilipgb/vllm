@@ -61,6 +61,9 @@ ARG GIT_REPO_CHECK=0
 RUN --mount=type=bind,source=.git,target=.git \
     if [ "$GIT_REPO_CHECK" != 0 ]; then bash tools/check_repo.sh; fi
 
+#Install pyzmq separately
+RUN pip install --no-cache-dir --verbose pyzmq
+
 #Install Python requirements
 RUN --mount=type=cache,target=/root/.cache/pip  \
     pip install -v \
