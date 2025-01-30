@@ -1,0 +1,12 @@
+steps:
+
+# Step: CPU Tests for s390x
+- label: "CPU Tests for s390x"
+  agents:
+    queue: default
+  env:
+    VLLM_CPU_KVCACHE_SPACE: 10
+    HF_TOKEN: "${HF_TOKEN:-}"
+  commands:
+    - cd /root/vllm_dilip_buildkite/vllm
+    - bash .buildkite/run-cpu-test-s390x.sh
