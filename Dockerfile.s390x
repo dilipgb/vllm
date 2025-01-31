@@ -1,7 +1,8 @@
+# Dockerfile for vLLM on s390x architecture with dependencies, PyTorch, torchvision, and Apache Arrow
 FROM ubuntu:22.04
 USER root
 
-# Install necessary dependencies
+
 RUN apt-get update -y && apt-get install -y \
     git wget curl vim libnuma-dev libsndfile-dev libprotobuf-dev protobuf-compiler \
     build-essential ffmpeg libsm6 libxext6 libgl1 python3 python3-pip cmake ninja-build \
@@ -10,17 +11,14 @@ RUN apt-get update -y && apt-get install -y \
     python3-distutils python3-setuptools libbz2-dev liblz4-dev libzstd-dev \
     libsnappy-dev rapidjson-dev libboost-dev liborc-dev pkg-config libopenblas-dev
 
-# Upgrade pip
-RUN python3 -m pip install --upgrade pip
 
-# **Fix pip cache permission issues**
-RUN rm -rf /root/.cache/pip && mkdir -p /root/.cache/pip && chmod -R 777 /root/.cache/pip
+RUN python3 -m pip install --upgrade pip setuptools
 
-# Install Rust and Cargo
+
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \
     . "$HOME/.cargo/env"
 
-# Build and install Apache Arrow from source
+
 WORKDIR /tmp/arrow
 RUN git clone https://github.com/apache/arrow.git && \
     cd arrow/cpp && \
@@ -41,14 +39,14 @@ RUN git clone https://github.com/apache/arrow.git && \
           .. && \
     make -j$(nproc) && make install
 
-# Set environment variables for Arrow
+
 ENV CMAKE_PREFIX_PATH=/usr/local/lib/cmake:$CMAKE_PREFIX_PATH
 ENV LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
 
-# Install PyTorch nightly
+
 RUN pip install --no-cache-dir https://download.pytorch.org/whl/nightly/cpu/torch-2.6.0.dev20241201%2Bcpu-cp310-cp310-linux_s390x.whl
 
-# Clone torchvision
+
 RUN git clone https://github.com/pytorch/vision.git && \
     cd vision && \
     git checkout 48b1edf && \
@@ -56,54 +54,37 @@ RUN git clone https://github.com/pytorch/vision.git && \
     pip install --no-cache-dir dist/*.whl && \
     rm -rf dist
 
-# **Fix permissions for pip cache**
-RUN chmod -R 777 /root/.cache/pip
 
-# Create a non-root user and group
+COPY . /workspace/vllm
 WORKDIR /workspace/vllm
-RUN groupadd -r vllm && \
-    useradd --uid 2000 --gid vllm -m -d /home/vllm vllm    
 
-# Copy the vLLM repository
-COPY ./ /workspace/vllm
-WORKDIR /workspace/vllm
+
+RUN git config --global --add safe.directory /workspace/vllm && \
+    git rev-parse --is-inside-work-tree || git init && \
+    git config --global user.email "docker@build.local" && \
+    git config --global user.name "Docker Builder" && \
+    git add . && git commit -m "Initial commit" --allow-empty
+
 
 ARG GIT_REPO_CHECK=0
 RUN --mount=type=bind,source=.git,target=.git \
     if [ "$GIT_REPO_CHECK" != 0 ]; then bash tools/check_repo.sh; fi
 
-# Install pyzmq separately
-RUN pip install --no-cache-dir --verbose pyzmq
 
-# **Ensure correct permissions before pip install**
-RUN chmod -R 777 /root/.cache/pip
+RUN mkdir -p /root/.cache/pip && chmod -R 777 /root/.cache/pip
 
-# **Install numpy & dependencies separately to prevent build errors**
-RUN pip install --no-cache-dir --user numpy==1.25.2
-
-# **Install Python requirements**
-RUN --mount=type=cache,target=/root/.cache/pip  \
-    pip install --no-cache-dir --user -v \
+RUN pip install --no-cache-dir -v \
         'cmake>=3.26' ninja packaging 'setuptools-scm>=8' wheel jinja2 \
         -r requirements-cpu.txt \
         xformers uvloop==0.21.0
 
-# Upgrade setuptools to a compatible version
 RUN python3 -m pip install --upgrade setuptools
 
-# Build and Install vLLM
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/ccache \
-    --mount=type=bind,source=.git,target=.git \
     VLLM_TARGET_DEVICE=cpu python3 setup.py build_ext --inplace && \
     VLLM_TARGET_DEVICE=cpu python3 setup.py bdist_wheel && \
     pip install --no-cache-dir dist/*.whl && \
     rm -rf dist
-    
-# Set permissions for non-root user
-RUN chown -R vllm:vllm /workspace/vllm
-USER vllm    
 
-# Entry point for the API server
 ENTRYPOINT ["/usr/bin/python3", "-m", "vllm.entrypoints.openai.api_server"]
-
